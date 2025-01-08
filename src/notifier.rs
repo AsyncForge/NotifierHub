@@ -1,12 +1,3 @@
-// TODO LATER: Create a wrapper behind a mutex for the `NotifierHub`.
-// TODO LATER: Implement methods for message types that implement `Closable` (should include `shutdown_channel` to close a specific channel and `shutdown_all` to close all channels).
-// TODO LATER: Implement `Drop` for receivers to enable automatic unsubscription. This requires creating a wrapper containing a shared reference to the `NotifierHub` to call `unsubscribe`.
-// TODO LATER: Add a wait-for-closing notifier. This should behave similarly to the creation waiters, but for destruction events.
-// TODO LATER: Add the ability to create `WritingHandler` directly from user input.
-// TODO LATER: Add the possibility to choose specific tasks to wait for in `WritingHandler`.
-// TODO LATER: Improve error handling in `WritingHandler` by allowing identification of which sender failed.
-// TODO LATER: Allow the user to pass this as an argument to certain functions (not yet implemented).
-
 use crate::{
     error::{NotifierError, UnexpectedErrorKind},
     writing_handler::WritingHandler,
@@ -45,11 +36,21 @@ pub struct SmartChannelId {
     pub(crate) notifier_address: usize,
 }
 
+/// Sender bound to a receiver that just call unsubscribe method of the hub.
+pub type DeadSender<M> = MessageSender<M>;
+
+/// Type alias for the receivers returned by the get_sender method of the Hub
 pub type MessageSender<M> = Sender<M, SmartChannelId>;
+/// Type alias for the sender returned by the subscribe method of the Hub
 pub type MessageReceiver<M> = Receiver<M, SmartChannelId>;
 
+/// Type alias for the receivers returned by the get_destruction_waiter method of the Hub
+pub type DestructionWaiter<M> = Receiver<DeadSender<M>, SmartChannelId>;
+type DestructionSender<M> = Sender<DeadSender<M>, SmartChannelId>;
+
+/// Type alias for the receivers returned by the get_creation_waiter method of the Hub
 pub type CreationWaiter = Receiver<(), SmartChannelId>;
-pub type CreationSender = Sender<(), SmartChannelId>;
+type CreationSender = Sender<(), SmartChannelId>;
 
 /// The main data structure of the crate. It contains all the senders for subscribers and the waiters for channel creation notifications.
 /// The `ChannelId` is used to identify differents channels it can be any type as long as it implements Eq, Hash, et for the majority of the functions Clone
@@ -57,6 +58,7 @@ pub struct NotifierHub<M, ChannelId: Eq + Hash> {
     connection_id: usize,
     senders: HashMap<ChannelId, Vec<MessageSender<M>>>,
     creation_senders: HashMap<ChannelId, Vec<CreationSender>>,
+    destruction_senders: HashMap<ChannelId, Vec<DestructionSender<M>>>,
 }
 
 /// Get the senders of a given channel and returns a pointer to an empty vec if uninitialised. First case returns immutable.
@@ -79,6 +81,7 @@ impl<M, ChannelId: Eq + Hash> NotifierHub<M, ChannelId> {
             connection_id: 0,
             senders: HashMap::new(),
             creation_senders: HashMap::new(),
+            destruction_senders: HashMap::new(),
         }
     }
 
@@ -97,7 +100,7 @@ impl<M, ChannelId: Eq + Hash> NotifierHub<M, ChannelId> {
     /// `new_cloning_broadcast` is used to broadcast to all waiters.
     fn notify_creation(&mut self, id: &ChannelId) -> WritingHandler<()> {
         if let Some(waiters) = self.creation_senders.get(id) {
-            WritingHandler::new_cloning_broadcast(&(), waiters)
+            WritingHandler::new_cloning_broadcast((), waiters)
         } else {
             WritingHandler::empty()
         }
@@ -228,7 +231,7 @@ where
     ///
     /// let mut hub = NotifierHub::new();
     /// let msg = "Short message".to_string(); // Lightweight message
-    /// hub.clone_send(&msg, &"channel1");
+    /// hub.clone_send(msg, &"channel1");
     /// ```
     ///
     pub fn clone_send(
@@ -692,11 +695,11 @@ mod tests {
         let mut hub = NotifierHub::new();
         let receiver = hub.subscribe(&"channel1");
         let msg = "Message !".to_string();
-        let handler = hub.clone_send(&msg, &"channel1").unwrap();
+        let handler = hub.clone_send(msg.clone(), &"channel1").unwrap();
         handler.wait(None).await.unwrap();
 
         // Test uninitialised channel
-        let uninitialised_result = hub.clone_send(&"No such channel".to_string(), &"channel2");
+        let uninitialised_result = hub.clone_send("No such channel".to_string(), &"channel2");
         assert!(matches!(
             uninitialised_result,
             Err(NotifierError::ChannelUninitialized("channel2"))
@@ -706,7 +709,7 @@ mod tests {
 
         // Test closed channel
         hub.clean_channel(&"channel1");
-        let closed_result = hub.clone_send(&msg, &"channel1");
+        let closed_result = hub.clone_send(msg, &"channel1");
         assert_eq!(closed_result.unwrap().len(), 0);
     }
 
@@ -717,7 +720,7 @@ mod tests {
         let mut receiver2 = hub.subscribe(&"channel2");
 
         let msg = "Clone broadcast message".to_string();
-        let handler = hub.broadcast_clone(&msg);
+        let handler = hub.broadcast_clone(msg.clone());
         assert_eq!(handler.len(), 2); // Two channels
 
         assert_eq!(
@@ -734,7 +737,7 @@ mod tests {
         drop(receiver1);
         drop(receiver2);
 
-        let handler_after_drop = hub.broadcast_clone(&msg);
+        let handler_after_drop = hub.broadcast_clone(msg);
         assert_eq!(handler_after_drop.len(), 0); // No active receivers
     }
 }

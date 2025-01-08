@@ -25,7 +25,7 @@
 //!     let msg = "Message !";
 //!
 //!     // Send the message to all subscribers and get a WritingHandler to track the results
-//!     let handler = hub.clone_send(&msg, &"channel1").unwrap();
+//!     let handler = hub.clone_send(msg.clone(), &"channel1").unwrap();
 //!
 //!     // Wait for up to 100 milliseconds for senders to put the message in the channel buffer
 //!     // This ensures the message is sent successfully or times out.

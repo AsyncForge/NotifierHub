@@ -167,11 +167,11 @@ mod tests {
         let (tx2, mut rx2) = channel(10, TEST_ID);
 
         let message = "Hello from Arc!".to_string();
-        let handler = WritingHandler::new_cloning_broadcast(&message, &[tx1, tx2]);
+        let handler = WritingHandler::new_cloning_broadcast(message, &[tx1, tx2]);
         handler.wait(None).await.unwrap();
 
-        assert_eq!(rx1.recv().await.unwrap(), String::from("Hello from Arc!"));
-        assert_eq!(rx2.recv().await.unwrap(), String::from("Hello from Arc!"));
+        assert_eq!(*rx1.recv().await.unwrap(), String::from("Hello from Arc!"));
+        assert_eq!(*rx2.recv().await.unwrap(), String::from("Hello from Arc!"));
     }
 
     #[tokio::test]
@@ -179,13 +179,13 @@ mod tests {
         let (tx1, _rx1) = channel(1, TEST_ID);
 
         let valid_handler = WritingHandler::new_cloning_broadcast(
-            &"Message should pass".to_string(),
+            "Message should pass".to_string(),
             &[tx1.clone()],
         );
         valid_handler.wait(None).await.unwrap();
 
         let err_handler = WritingHandler::new_cloning_broadcast(
-            &"Message should not pass".to_string(),
+            "Message should not pass".to_string(),
             &[tx1.clone()],
         ); // The channel is full because of the previous messages, but the receiver never read so the sending is infinite
 
@@ -204,7 +204,7 @@ mod tests {
     async fn test_send_error() {
         let (tx, _) = channel(10, TEST_ID); // Receiver dropped intentionally.
 
-        let handler = WritingHandler::new_cloning_broadcast(&"Join test".to_string(), &[tx]);
+        let handler = WritingHandler::new_cloning_broadcast("Join test".to_string(), &[tx]);
 
         let result = handler.wait(None).await;
         assert!(result.is_err());
@@ -221,7 +221,7 @@ mod tests {
         let (tx2, _) = channel(10, TEST_ID); // Dropped receiver.
 
         let handler =
-            WritingHandler::new_cloning_broadcast(&"Multi-error test".to_string(), &[tx1, tx2]);
+            WritingHandler::new_cloning_broadcast("Multi-error test".to_string(), &[tx1, tx2]);
 
         let result = handler.wait(None).await;
         assert!(result.is_err());
@@ -236,7 +236,7 @@ mod tests {
     async fn test_no_error_with_successful_senders() {
         let (tx, mut rx) = channel(10, TEST_ID);
 
-        let handler = WritingHandler::new_cloning_broadcast(&"Success message".to_string(), &[tx]);
+        let handler = WritingHandler::new_cloning_broadcast("Success message".to_string(), &[tx]);
         tokio::spawn(async move {
             let _ = rx.recv().await;
         });
