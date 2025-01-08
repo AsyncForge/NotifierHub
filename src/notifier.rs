@@ -186,11 +186,10 @@ where
     /// hub.arc_send(large_msg, &"channel"); // Will wrap it into an Arc and share it
     /// ```
     pub fn arc_send(
-        &mut self,
+        &self,
         msg: M,
         id: &ChannelId,
     ) -> Result<WritingHandler<Arc<M>>, NotifierError<Arc<M>, ChannelId>> {
-        self.clean_channel(id);
         match self.channel_state(id) {
             ChannelState::Running => Ok(WritingHandler::new_arc_broadcast(
                 msg,
@@ -208,7 +207,7 @@ where
     ChannelId: Eq + Hash + Clone,
 {
     /// Broadcasts the cloned message to all channels.
-    pub fn broadcast_clone(&mut self, msg: &M) -> WritingHandler<M> {
+    pub fn broadcast_clone(&mut self, msg: M) -> WritingHandler<M> {
         self.clean_all();
         let senders: Vec<_> = self
             .senders
@@ -233,11 +232,10 @@ where
     /// ```
     ///
     pub fn clone_send(
-        &mut self,
-        msg: &M,
+        &self,
+        msg: M,
         id: &ChannelId,
     ) -> Result<WritingHandler<M>, NotifierError<M, ChannelId>> {
-        self.clean_channel(id);
         match self.channel_state(id) {
             ChannelState::Running => Ok(WritingHandler::new_cloning_broadcast(
                 msg,
