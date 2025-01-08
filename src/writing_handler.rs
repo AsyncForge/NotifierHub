@@ -43,17 +43,21 @@ impl<M: Send + 'static + Sync> WritingHandler<Arc<M>> {
 impl<M: Send + 'static + Clone> WritingHandler<M> {
     /// Creates a `WritingHandler` by cloning the message for each sender.
     /// This is useful when sending simple notification messages.
-    pub(crate) fn new_cloning_broadcast(msg: &M, senders: &[Sender<M, SmartChannelId>]) -> Self {
-        WritingHandler {
-            handlers: senders
-                .iter()
-                .map(|sender| {
-                    let msg = msg.clone();
-                    let sender = sender.clone();
-                    get_handler(sender, msg)
-                })
-                .collect(),
+    pub(crate) fn new_cloning_broadcast(msg: M, senders: &[Sender<M, SmartChannelId>]) -> Self {
+        if senders.is_empty() {
+            return Self::empty();
         }
+        let mut handlers = senders
+            .iter()
+            .skip(1)
+            .map(|sender| {
+                let msg = msg.clone();
+                let sender = sender.clone();
+                get_handler(sender, msg)
+            })
+            .collect::<Vec<_>>();
+        handlers.push(get_handler(senders[0].clone(), msg)); // Avoiding one clone
+        WritingHandler { handlers }
     }
 }
 
