@@ -1,5 +1,6 @@
 use crate::{
     error::{NotifierError, UnexpectedErrorKind},
+    unexpected,
     writing_handler::WritingHandler,
 };
 use smart_channel::channel;
@@ -38,6 +39,9 @@ pub struct SmartChannelId {
 
 /// Sender bound to a receiver that just call unsubscribe method of the hub.
 pub type DeadSender<M> = MessageSender<M>;
+
+type Waiter<T> = Receiver<T, SmartChannelId>;
+type NotificationSender<T> = Sender<T, SmartChannelId>;
 
 /// Type alias for the receivers returned by the get_sender method of the Hub
 pub type MessageSender<M> = Sender<M, SmartChannelId>;
@@ -95,15 +99,23 @@ impl<M, ChannelId: Eq + Hash> NotifierHub<M, ChannelId> {
         }
     }
 
+    fn notify<T: Send + Clone>(
+        id: &ChannelId,
+        m: T,
+        map: &HashMap<ChannelId, Vec<NotificationSender<T>>>,
+    ) -> WritingHandler<T> {
+        if let Some(waiters) = map.get(id) {
+            WritingHandler::new_cloning_broadcast(m, waiters)
+        } else {
+            WritingHandler::empty()
+        }
+    }
+
     /// Sends a notification to all waiters subscribed to a channel after a sender is created.
     /// This function should only be called after a sender is added. Since notifications use the unit type `()`,
     /// `new_cloning_broadcast` is used to broadcast to all waiters.
     fn notify_creation(&mut self, id: &ChannelId) -> WritingHandler<()> {
-        if let Some(waiters) = self.creation_senders.get(id) {
-            WritingHandler::new_cloning_broadcast((), waiters)
-        } else {
-            WritingHandler::empty()
-        }
+        Self::notify(id, (), &self.creation_senders)
     }
 
     /// Returns `true` if the given receiver is subscribed to the specified channel.
@@ -116,12 +128,21 @@ impl<M, ChannelId: Eq + Hash> NotifierHub<M, ChannelId> {
         }
     }
 
-    /// Returns the number of creation waiters for a given channel.
-    pub fn number_of_creation_waiter(&self, id: &ChannelId) -> usize {
-        match self.creation_senders.get(id) {
+    pub fn number_of_waiter<T>(id: &ChannelId, map: &HashMap<ChannelId, Vec<T>>) -> usize {
+        match map.get(id) {
             Some(w) => w.len(),
             None => 0,
         }
+    }
+
+    /// Returns the number of creation waiters for a given channel.
+    pub fn number_of_creation_waiter(&self, id: &ChannelId) -> usize {
+        Self::number_of_waiter(id, &self.creation_senders)
+    }
+
+    /// Returns the number of destruction  waiters for a given channel.
+    pub fn number_of_destruction_waiter(&self, id: &ChannelId) -> usize {
+        Self::number_of_waiter(id, &self.destruction_senders)
     }
 
     /// Returns the current state of the specified channel.
@@ -209,6 +230,81 @@ where
     M: Send + Clone + 'static,
     ChannelId: Eq + Hash + Clone,
 {
+    /// Sends a notification to all waiters subscribed to a channel after someone unsubscribed.
+    /// This function should only be called after a sender is added. Since notifications are simple senders,
+    /// `new_cloning_broadcast` is used to broadcast to all waiters.
+    fn notify_destruction(
+        &mut self,
+        id: &ChannelId,
+        dead_sender: DeadSender<M>,
+    ) -> WritingHandler<DeadSender<M>> {
+        Self::notify(id, dead_sender, &self.destruction_senders)
+    }
+
+    /// Unsubscribes from all subscriptions for the given receiver across all channels.
+    /// This function calls `unsubscribe_multiple` using the list returned by `subscribed_list`.
+    /// If the receiver is subscribed to multiple channels, it removes the subscriptions for all of them.
+    /// Returns the list of channel IDs from which the receiver was unsubscribed.
+    pub fn unsubscribe_all(&mut self, receiver: &MessageReceiver<M>) -> Vec<ChannelId> {
+        let sub_list = self.subscribed_list(receiver);
+        if !sub_list.is_empty() {
+            let _ = self.unsubscribe_multiple(&sub_list, receiver); // This should not fail as `subscribed_list` returns only valid channels.
+        }
+        sub_list
+    }
+
+    /// This function takes in parameter a receiver, and remove the associated sender in the given channel, it it exists, otherwise it returns an error. Returns the new state of the channel.
+    pub fn unsubscribe(
+        &mut self,
+        id: &ChannelId,
+        receiver: &MessageReceiver<M>,
+    ) -> Result<ChannelState, NotifierError<M, ChannelId>> {
+        match self.channel_state(id) {
+            ChannelState::Running => {
+                if !self.is_subscribed(id, receiver) {
+                    return Err(NotifierError::NotSubscribed(id.clone()));
+                }
+                match self.senders.get_mut(id) {
+                    Some(senders) => {
+                        let sender = match senders.iter().find(|s| s.is_bound_to(receiver)).cloned()
+                        {
+                            Some(s) => s,
+                            None => unexpected!(SenderIsMissing),
+                        };
+                        senders.retain(|sender| !sender.is_bound_to(receiver));
+                        self.notify_destruction(id, sender);
+                        Ok(self.channel_state(id))
+                    }
+                    None => unexpected!(InvalidChannelStateUnsubscribe), // Should never append as we already checked the state
+                }
+            }
+            _ => Err(NotifierError::NotSubscribed(id.clone())),
+        }
+    }
+
+    /// This function try to call unsubscribe with all the given ids.
+    /// If it fails to unsubribe for one or more of the given ids with the given receiver
+    /// the function returns a the NotSubscribeMultiple error which contains all the errors
+    /// Note that anyway, all the channels will be unsubscribed at the end of the function even if cath
+    /// an error during the process
+    pub fn unsubscribe_multiple(
+        &mut self,
+        ids: &[ChannelId],
+        receiver: &MessageReceiver<M>,
+    ) -> Result<(), NotifierError<M, ChannelId>> {
+        let mut errors = Vec::new();
+        for id in ids {
+            if let Err(e) = self.unsubscribe(id, receiver) {
+                errors.push(e)
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(NotifierError::NotSubscribedMultiple(errors))
+        }
+    }
+
     /// Broadcasts the cloned message to all channels.
     pub fn broadcast_clone(&mut self, msg: M) -> WritingHandler<M> {
         self.clean_all();
@@ -290,76 +386,30 @@ impl<M, ChannelId: Eq + Hash + Clone> NotifierHub<M, ChannelId> {
             .collect()
     }
 
-    /// Unsubscribes from all subscriptions for the given receiver across all channels.
-    /// This function calls `unsubscribe_multiple` using the list returned by `subscribed_list`.
-    /// If the receiver is subscribed to multiple channels, it removes the subscriptions for all of them.
-    /// Returns the list of channel IDs from which the receiver was unsubscribed.
-    pub fn unsubscribe_all(&mut self, receiver: &MessageReceiver<M>) -> Vec<ChannelId> {
-        let sub_list = self.subscribed_list(receiver);
-        if !sub_list.is_empty() {
-            let _ = self.unsubscribe_multiple(&sub_list, receiver); // This should not fail as `subscribed_list` returns only valid channels.
-        }
-        sub_list
-    }
-
-    /// This function takes in parameter a receiver, and remove the associated sender in the given channel, it it exists, otherwise it returns an error. Returns the new state of the channel.
-    pub fn unsubscribe(
-        &mut self,
+    /// This function returns a creation waiter for the channel. The waiter is notified each time someone subscribe to the channel
+    pub fn get_waiter<T>(
+        channel_id: SmartChannelId,
         id: &ChannelId,
-        receiver: &MessageReceiver<M>,
-    ) -> Result<ChannelState, NotifierError<M, ChannelId>> {
-        match self.channel_state(id) {
-            ChannelState::Running => {
-                if !self.is_subscribed(id, receiver) {
-                    return Err(NotifierError::NotSubscribed(id.clone()));
-                }
-                match self.senders.get_mut(id) {
-                    Some(senders) => {
-                        senders.retain(|sender| !sender.is_bound_to(receiver));
-                        Ok(self.channel_state(id))
-                    }
-                    None => Err(NotifierError::UnexpectedError(
-                        UnexpectedErrorKind::InvalidChannelStateUnsubscribe,
-                    )), // Should never append as we already checked the state
-                }
-            }
-            _ => Err(NotifierError::NotSubscribed(id.clone())),
-        }
-    }
-
-    /// This function try to call unsubscribe with all the given ids.
-    /// If it fails to unsubribe for one or more of the given ids with the given receiver
-    /// the function returns a the NotSubscribeMultiple error which contains all the errors
-    /// Note that anyway, all the channels will be unsubscribed at the end of the function even if cath
-    /// an error during the process
-    pub fn unsubscribe_multiple(
-        &mut self,
-        ids: &[ChannelId],
-        receiver: &MessageReceiver<M>,
-    ) -> Result<(), NotifierError<M, ChannelId>> {
-        let mut errors = Vec::new();
-        for id in ids {
-            if let Err(e) = self.unsubscribe(id, receiver) {
-                errors.push(e)
+        map: &mut HashMap<ChannelId, Vec<NotificationSender<T>>>,
+    ) -> Waiter<T> {
+        let (sender, receiver) = channel(NOTIFIER_CHANNEL_SIZE, channel_id);
+        match map.get_mut(id) {
+            Some(s) => s.push(sender),
+            None => {
+                map.insert(id.clone(), vec![sender]);
             }
         }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(NotifierError::NotSubscribedMultiple(errors))
-        }
+        receiver
     }
 
     /// This function returns a creation waiter for the channel. The waiter is notified each time someone subscribe to the channel
     pub fn get_creation_waiter(&mut self, id: &ChannelId) -> CreationWaiter {
-        let (sender, receiver) = channel(NOTIFIER_CHANNEL_SIZE, self.get_new_id());
-        match self.creation_senders.get_mut(id) {
-            Some(s) => s.push(sender),
-            None => {
-                self.creation_senders.insert(id.clone(), vec![sender]);
-            }
-        }
-        receiver
+        Self::get_waiter(self.get_new_id(), id, &mut self.creation_senders)
+    }
+
+    /// This function returns a destruction waiter for the channel. The waiter is notified each time someone unsubscribe to the channel
+    pub fn get_destruction_waiter(&mut self, id: &ChannelId) -> DestructionWaiter<M> {
+        Self::get_waiter(self.get_new_id(), id, &mut self.destruction_senders)
     }
 }
 
@@ -739,5 +789,33 @@ mod tests {
 
         let handler_after_drop = hub.broadcast_clone(msg);
         assert_eq!(handler_after_drop.len(), 0); // No active receivers
+    }
+
+    #[tokio::test]
+    async fn test_get_destruction_sender() {
+        let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
+        let mut destruction_waiter = hub.get_destruction_waiter(&"channel1");
+
+        let mut receiver = hub.subscribe(&"channel1");
+
+        assert_eq!(hub.channel_state(&"channel1"), ChannelState::Running);
+
+        let result = hub.unsubscribe(&"channel1", &receiver);
+        assert!(result.is_ok());
+        assert_eq!(hub.channel_state(&"channel1"), ChannelState::Over);
+
+        let dead_sender = destruction_waiter.recv().await.unwrap();
+
+        let msg = "Dead Message".to_string();
+
+        dead_sender.send(msg.clone()).await.unwrap();
+
+        assert_eq!(receiver.recv().await.unwrap(), msg);
+
+        let invalid_result = hub.unsubscribe(&"channel1", &receiver);
+        assert!(matches!(
+            invalid_result,
+            Err(NotifierError::NotSubscribed("channel1"))
+        ));
     }
 }

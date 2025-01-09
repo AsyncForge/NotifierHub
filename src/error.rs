@@ -1,10 +1,18 @@
 use thiserror::Error;
 use tokio::{sync::mpsc::error::SendError, task::JoinError, time::Duration};
 
+#[macro_export]
+macro_rules! unexpected {
+    ($kind:ident) => {
+        return Err(NotifierError::UnexpectedError(UnexpectedErrorKind::$kind))
+    };
+}
+
 #[derive(Debug)]
 pub enum UnexpectedErrorKind {
     DurationIsMissing,
     InvalidChannelStateUnsubscribe,
+    SenderIsMissing,
 }
 
 #[derive(Debug, Error)]
