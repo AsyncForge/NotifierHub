@@ -184,10 +184,9 @@ where
     M: Send + Sync + 'static,
     ChannelId: Eq + Hash + Clone,
 {
-    /// Sends an `Arc`-wrapped message to all channels. Cleans inactive receivers before sending.
+    /// Sends an `Arc`-wrapped message to all channels.
     /// Useful for broadcasting large messages without cloning the data.
-    pub fn broadcast_arc(&mut self, msg: M) -> WritingHandler<Arc<M>> {
-        self.clean_all();
+    pub fn broadcast_arc(&self, msg: M) -> WritingHandler<Arc<M>> {
         let senders: Vec<_> = self
             .senders
             .values()
@@ -308,8 +307,7 @@ where
     }
 
     /// Broadcasts the cloned message to all channels.
-    pub fn broadcast_clone(&mut self, msg: M) -> WritingHandler<M> {
-        self.clean_all();
+    pub fn broadcast_clone(&self, msg: M) -> WritingHandler<M> {
         let senders: Vec<_> = self
             .senders
             .values()
@@ -790,13 +788,6 @@ mod tests {
             receiver2.recv().await.unwrap(),
             "Clone broadcast message".to_string()
         );
-
-        // Drop receivers and broadcast again
-        drop(receiver1);
-        drop(receiver2);
-
-        let handler_after_drop = hub.broadcast_clone(msg);
-        assert_eq!(handler_after_drop.len(), 0); // No active receivers
     }
 
     #[tokio::test]
