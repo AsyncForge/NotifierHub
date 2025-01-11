@@ -62,16 +62,11 @@
 //!fn subscriber_1(hub: Arc<Mutex<NotifierHub<Message, &'static str>>>) {
 //!    tokio::spawn(async move {
 //!        // Subscribing to "channel1" and "channel2"
-//!        let mut receiver = hub
-//!            .lock()
-//!            .await
-//!            .subscribe_multiple(&["channel1", "channel2"], 100);
+//!        let mut receiver = hub.lock().await.subscribe_multiple(&["channel1", "channel2"], 100);
 //!        loop {
 //!            let msg = receiver.recv().await.unwrap();
 //!            match msg {
-//!                Message::StringMessage(s_msg) => {
-//!                    println!("Just received a new message as subscriber_1: {s_msg}")
-//!                }
+//!                Message::StringMessage(s_msg) => println!("Just received a new message as subscriber_1: {s_msg}"),
 //!                Message::Number(n) => println!("Just received a number as subscriber_1: {n}"),
 //!                Message::Close => break,
 //!            }
@@ -88,9 +83,7 @@
 //!        loop {
 //!            let msg = receiver.recv().await.unwrap();
 //!            match msg {
-//!                Message::StringMessage(s_msg) => {
-//!                    println!("Just received a new message as subscriber_2: {s_msg}")
-//!                }
+//!                Message::StringMessage(s_msg) => println!("Just received a new message as subscriber_2: {s_msg}"),
 //!                Message::Number(n) => println!("Just received a number as subscriber_2: {n}"),
 //!                Message::Close => break,
 //!            }
