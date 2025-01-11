@@ -59,7 +59,7 @@ async fn main() {
 ### **Exemple with threads**
 
 ```rust
-use notifier_hub::notifier::NotifierHub;
+use crate::{closable_trait::ClosableMessage, notifier::NotifierHub};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -71,11 +71,20 @@ enum Message {
     Close,
 }
 
+impl ClosableMessage for Message {
+    fn get_close_message() -> Self {
+        Self::Close
+    }
+}
+
 // First subscriber
 fn subscriber_1(hub: Arc<Mutex<NotifierHub<Message, &'static str>>>) {
     tokio::spawn(async move {
         // Subscribing to "channel1" and "channel2"
-        let mut receiver = hub.lock().await.subscribe_multiple(&["channel1", "channel2"], 100);
+        let mut receiver = hub
+            .lock()
+            .await
+            .subscribe_multiple(&["channel1", "channel2"], 100);
         loop {
             let msg = receiver.recv().await.unwrap();
             match msg {
@@ -86,7 +95,7 @@ fn subscriber_1(hub: Arc<Mutex<NotifierHub<Message, &'static str>>>) {
                 Message::Close => break,
             }
         }
-        hub.lock().await.unsubscribe_multiple(&["channel1", "channel2"], &receiver).unwrap();
+        // As we are breaking with close, we don't need to unsubscribe
     });
 }
 
@@ -105,12 +114,12 @@ fn subscriber_2(hub: Arc<Mutex<NotifierHub<Message, &'static str>>>) {
                 Message::Close => break,
             }
         }
-        hub.lock().await.unsubscribe(&"channel1", &receiver).unwrap();
+        // As we are breaking with close, we don't need to unsubscribe
     });
 }
 
-#[tokio::main]
-async fn main() {
+#[tokio::test]
+async fn test_main() {
     // Create a new NotifierHub wrapped in a mutex
     let hub = Arc::new(Mutex::new(NotifierHub::new()));
 
@@ -126,7 +135,7 @@ async fn main() {
     creation_waiter.recv().await.unwrap();
 
     {
-        let hub = hub.lock().await;
+        let mut hub = hub.lock().await;
 
         let msg1 = Message::StringMessage("Hello!".to_string());
         // Send the message to subscriber_1 and subscriber_2 as they are both subscribed to "channel1"
@@ -140,9 +149,8 @@ async fn main() {
         // Sends msg3 on all channels, so subscriber_1 will receive it twice
         hub.broadcast_clone(msg3);
 
-        let closing_message = Message::Close;
         // Send a close message to subscriber_1 and subscriber_2
-        hub.clone_send(closing_message, &"channel1").unwrap();
+        hub.shutdown_clone(&"channel1").unwrap();
     }
 
     // Wait for both subscriber_1 and subscriber_2 to unsubscribe

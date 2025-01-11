@@ -36,4 +36,6 @@ pub enum NotifierError<M, ChannelId> {
     ChannelUninitialized(ChannelId),
     #[error("The channel {0:?} is over")]
     ChannelOver(ChannelId),
+    #[error("The channel {0:?} does not exist")]
+    ChannelNotExist(ChannelId),
 }

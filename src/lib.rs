@@ -40,7 +40,7 @@
 //! The example below demonstrates how to use notifier_hub to create a multithreaded notification system, where multiple subscribers listen for messages on different channels.
 //!
 //! ```rust
-//!use notifier_hub::notifier::NotifierHub;
+//!use notifier_hub::{closable_trait::ClosableMessage, notifier::NotifierHub};
 //!use std::sync::Arc;
 //!use tokio::sync::Mutex;
 //!
@@ -52,20 +52,31 @@
 //!    Close,
 //!}
 //!
+//!impl ClosableMessage for Message {
+//!    fn get_close_message() -> Self {
+//!        Self::Close
+//!    }
+//!}
+//!
 //! // First subscriber
 //!fn subscriber_1(hub: Arc<Mutex<NotifierHub<Message, &'static str>>>) {
 //!    tokio::spawn(async move {
 //!        // Subscribing to "channel1" and "channel2"
-//!        let mut receiver = hub.lock().await.subscribe_multiple(&["channel1", "channel2"], 100);
+//!        let mut receiver = hub
+//!            .lock()
+//!            .await
+//!            .subscribe_multiple(&["channel1", "channel2"], 100);
 //!        loop {
 //!            let msg = receiver.recv().await.unwrap();
 //!            match msg {
-//!                Message::StringMessage(s_msg) => println!("Just received a new message as subscriber_1: {s_msg}"),
+//!                Message::StringMessage(s_msg) => {
+//!                    println!("Just received a new message as subscriber_1: {s_msg}")
+//!                }
 //!                Message::Number(n) => println!("Just received a number as subscriber_1: {n}"),
 //!                Message::Close => break,
 //!            }
 //!        }
-//!        hub.lock().await.unsubscribe_multiple(&["channel1", "channel2"], &receiver).unwrap();
+//!        // As we are breaking with close, we don't need to unsubscribe
 //!    });
 //!}
 //!
@@ -77,12 +88,14 @@
 //!        loop {
 //!            let msg = receiver.recv().await.unwrap();
 //!            match msg {
-//!                Message::StringMessage(s_msg) => println!("Just received a new message as subscriber_2: {s_msg}"),
+//!                Message::StringMessage(s_msg) => {
+//!                    println!("Just received a new message as subscriber_2: {s_msg}")
+//!                }
 //!                Message::Number(n) => println!("Just received a number as subscriber_2: {n}"),
 //!                Message::Close => break,
 //!            }
 //!        }
-//!        hub.lock().await.unsubscribe(&"channel1", &receiver).unwrap();
+//!        // As we are breaking with close, we don't need to unsubscribe
 //!    });
 //!}
 //!
@@ -103,7 +116,7 @@
 //!    creation_waiter.recv().await.unwrap();
 //!
 //!    {
-//!        let hub = hub.lock().await;
+//!        let mut hub = hub.lock().await;
 //!
 //!        let msg1 = Message::StringMessage("Hello!".to_string());
 //!        // Send the message to subscriber_1 and subscriber_2 as they are both subscribed to "channel1"
@@ -117,15 +130,14 @@
 //!        // Sends msg3 on all channels, so subscriber_1 will receive it twice
 //!        hub.broadcast_clone(msg3);
 //!
-//!        let closing_message = Message::Close;
 //!        // Send a close message to subscriber_1 and subscriber_2
-//!        hub.clone_send(closing_message, &"channel1").unwrap();
+//!        hub.shutdown_clone(&"channel1").unwrap();
 //!    }
 //!
 //!    // Wait for both subscriber_1 and subscriber_2 to unsubscribe
 //!    destruction_waiter.recv().await;
 //!    destruction_waiter.recv().await;
-//!}
+//! }
 //! ```
 //! ## Modules
 //! This crate is organized into the following modules:
@@ -178,3 +190,7 @@ pub mod writing_handler;
 /// }
 /// ```
 pub mod error;
+
+pub mod closable_trait;
+
+mod test;

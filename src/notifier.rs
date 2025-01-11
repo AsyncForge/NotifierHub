@@ -1,4 +1,5 @@
 use crate::{
+    closable_trait::ClosableMessage,
     error::{NotifierError, UnexpectedErrorKind},
     unexpected,
     writing_handler::WritingHandler,
@@ -347,6 +348,11 @@ where
 }
 
 impl<M, ChannelId: Eq + Hash + Clone> NotifierHub<M, ChannelId> {
+    /// This function returns a list containing all initialized channels
+    pub fn get_channels(&self) -> Vec<ChannelId> {
+        self.senders.keys().cloned().collect()
+    }
+
     /// This function call the clean_channel method for all the initialized channels. Returns an hashmap binding each channel with its new state
     pub fn clean_all(&mut self) -> HashMap<ChannelId, ChannelState> {
         let mut map = HashMap::with_capacity(self.senders.len());
@@ -459,6 +465,43 @@ impl<M: Clone, ChannelId: Eq + Hash + Clone> NotifierHub<M, ChannelId> {
                     .map(|sender| (id.clone(), sender))
             })
             .collect()
+    }
+}
+
+impl<M, ChannelId> NotifierHub<M, ChannelId>
+where
+    M: Send + 'static + Clone + ClosableMessage,
+    ChannelId: Eq + Hash + Clone + Clone,
+{
+    /// This function takes as parameter a channel and shutdown it.
+    /// Shutdown means send to all the subscriber a close message obtained via the ClosableTrait
+    /// and remove the channel from the hub.
+    /// Here, the shutdown message will be broadcasted using clone.
+    /// Destruction waiter will also be notified for all the dead senders.
+    /// Returns an error if the channel doesn't exist
+    pub fn shutdown_clone(
+        &mut self,
+        channel: &ChannelId,
+    ) -> Result<WritingHandler<M>, NotifierError<M, ChannelId>> {
+        match self.senders.remove(&channel) {
+            Some(dead_senders) => {
+                for dead_sender in dead_senders.iter() {
+                    self.notify_destruction(channel, dead_sender.clone());
+                }
+                let h =
+                    WritingHandler::new_cloning_broadcast(M::get_close_message(), &dead_senders);
+                Ok(h)
+            }
+            None => Err(NotifierError::ChannelNotExist(channel.clone())),
+        }
+    }
+
+    /// This method simply call shutdown_all for all the channels.
+    pub fn shutdown_all_clone(&mut self) {
+        let channels = self.get_channels();
+        for channel in channels {
+            let _ = self.shutdown_clone(&channel); // We can ignore because get_channels returns valid data
+        }
     }
 }
 
@@ -816,5 +859,86 @@ mod tests {
             invalid_result,
             Err(NotifierError::NotSubscribed("channel1"))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_get_channels() {
+        let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
+        hub.subscribe(&"channel1", 100);
+        hub.subscribe(&"channel2", 100);
+        hub.subscribe(&"channel3", 100);
+
+        let channels = hub.get_channels();
+        assert_eq!(channels.len(), 3);
+        assert!(channels.contains(&"channel1"));
+        assert!(channels.contains(&"channel2"));
+        assert!(channels.contains(&"channel3"));
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    // Message de fermeture personnalisé
+    impl ClosableMessage for String {
+        fn get_close_message() -> Self {
+            "CLOSE_MESSAGE".to_string()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_clone() {
+        let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
+
+        let mut receiver1 = hub.subscribe(&"channel1", 100);
+        let mut receiver2 = hub.subscribe(&"channel1", 100);
+        let _ = hub.subscribe(&"channel2", 100);
+
+        // Vérification avant shutdown
+        assert_eq!(hub.channel_state(&"channel1"), ChannelState::Running);
+        assert_eq!(hub.channel_state(&"channel2"), ChannelState::Running);
+
+        // Shutdown du channel1
+        let handler = hub.shutdown_clone(&"channel1").unwrap();
+        assert_eq!(handler.len(), 2); // Deux messages envoyés dans channel1
+
+        // Les receivers doivent recevoir le message de fermeture
+        assert_eq!(receiver1.recv().await.unwrap(), "CLOSE_MESSAGE");
+        assert_eq!(receiver2.recv().await.unwrap(), "CLOSE_MESSAGE");
+
+        // Le channel1 est marqué comme terminé
+        assert_eq!(hub.channel_state(&"channel1"), ChannelState::Uninitialised);
+        assert_eq!(hub.channel_state(&"channel2"), ChannelState::Running);
+
+        // Shutdown d'un channel inexistant
+        let nonexistent_result = hub.shutdown_clone(&"channel3");
+        assert!(matches!(
+            nonexistent_result,
+            Err(NotifierError::ChannelNotExist("channel3"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_all_clone() {
+        let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
+        let mut receiver1 = hub.subscribe(&"channel1", 100);
+        let mut receiver2 = hub.subscribe(&"channel2", 100);
+        let mut receiver3 = hub.subscribe(&"channel3", 100);
+
+        assert_eq!(hub.channel_state(&"channel1"), ChannelState::Running);
+        assert_eq!(hub.channel_state(&"channel2"), ChannelState::Running);
+        assert_eq!(hub.channel_state(&"channel3"), ChannelState::Running);
+
+        hub.shutdown_all_clone(); // Ferme tous les channels
+
+        assert_eq!(hub.channel_state(&"channel1"), ChannelState::Uninitialised);
+        assert_eq!(hub.channel_state(&"channel2"), ChannelState::Uninitialised);
+        assert_eq!(hub.channel_state(&"channel3"), ChannelState::Uninitialised);
+
+        // Tous les receivers doivent recevoir le message de fermeture
+        assert_eq!(receiver1.recv().await.unwrap(), "CLOSE_MESSAGE");
+        assert_eq!(receiver2.recv().await.unwrap(), "CLOSE_MESSAGE");
+        assert_eq!(receiver3.recv().await.unwrap(), "CLOSE_MESSAGE");
     }
 }
