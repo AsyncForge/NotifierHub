@@ -7,8 +7,6 @@ use smart_channel::channel;
 pub use smart_channel::{Receiver, Sender};
 use std::{collections::HashMap, hash::Hash, sync::Arc};
 
-/// The default size of a message channel.
-pub(crate) const CHANNEL_SIZE: usize = 100;
 /// The default size of a notification channel.
 pub(crate) const NOTIFIER_CHANNEL_SIZE: usize = 10;
 
@@ -59,9 +57,13 @@ type CreationSender = Sender<(), SmartChannelId>;
 /// The main data structure of the crate. It contains all the senders for subscribers and the waiters for channel creation notifications.
 /// The `ChannelId` is used to identify differents channels it can be any type as long as it implements Eq, Hash, et for the majority of the functions Clone
 pub struct NotifierHub<M, ChannelId: Eq + Hash> {
+    /// Used to create new id for the smart_channels.
     connection_id: usize,
+    /// Binding channel with message senders
     senders: HashMap<ChannelId, Vec<MessageSender<M>>>,
+    /// Binding channel with creation notifier
     creation_senders: HashMap<ChannelId, Vec<CreationSender>>,
+    /// Binding channel with destruction notifier
     destruction_senders: HashMap<ChannelId, Vec<DestructionSender<M>>>,
 }
 
@@ -357,8 +359,9 @@ impl<M, ChannelId: Eq + Hash + Clone> NotifierHub<M, ChannelId> {
     }
 
     /// This function returns a receiver subscribed to the channels specified in the parameter. If the channel is uninitialised, it insert the sender with the insert sender function
-    pub fn subscribe(&mut self, id: &ChannelId) -> MessageReceiver<M> {
-        let (sender, receiver) = channel(CHANNEL_SIZE, self.get_new_id());
+    /// The third parameter represents the size for the tokio channels
+    pub fn subscribe(&mut self, id: &ChannelId, channel_size: usize) -> MessageReceiver<M> {
+        let (sender, receiver) = channel(channel_size, self.get_new_id());
         self.insert_sender(sender, id);
         receiver
     }
@@ -417,8 +420,13 @@ impl<M: Clone, ChannelId: Eq + Hash + Clone> NotifierHub<M, ChannelId> {
     /// Subscribes to all the channels specified in the `ids` array by inserting the same sender into each channel.
     /// A single receiver is returned, bound to all channels.
     /// Since the sender is cloned for each channel, `M` must implement `Clone`.
-    pub fn subscribe_multiple(&mut self, ids: &[ChannelId]) -> MessageReceiver<M> {
-        let (sender, receiver) = channel(CHANNEL_SIZE, self.get_new_id());
+    /// The third parameter represents the size for the tokio channels
+    pub fn subscribe_multiple(
+        &mut self,
+        ids: &[ChannelId],
+        channel_size: usize,
+    ) -> MessageReceiver<M> {
+        let (sender, receiver) = channel(channel_size, self.get_new_id());
         for id in ids {
             self.insert_sender(sender.clone(), id);
         }
@@ -581,7 +589,7 @@ mod tests {
 
         hub.creation_senders.insert("channel1", vec![waiter]);
 
-        let receiver = hub.subscribe(&"channel1");
+        let receiver = hub.subscribe(&"channel1", 100);
 
         assert_eq!(hub.channel_state(&"channel1"), ChannelState::Running);
         assert!(hub.is_subscribed(&"channel1", &receiver));
@@ -592,8 +600,8 @@ mod tests {
     #[tokio::test]
     async fn test_subscribed_list() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe(&"channel1");
-        hub.subscribe(&"channel2");
+        let receiver = hub.subscribe(&"channel1", 100);
+        hub.subscribe(&"channel2", 100);
 
         let subscribed_channels = hub.subscribed_list(&receiver);
         assert!(subscribed_channels == vec!("channel1"));
@@ -602,7 +610,7 @@ mod tests {
     #[tokio::test]
     async fn test_unsubscribe() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe(&"channel1");
+        let receiver = hub.subscribe(&"channel1", 100);
 
         let result = hub.unsubscribe(&"channel1", &receiver);
         assert!(result.is_ok());
@@ -618,8 +626,8 @@ mod tests {
     #[tokio::test]
     async fn test_unsubscribe_multiple() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe(&"channel1");
-        hub.subscribe(&"channel2");
+        let receiver = hub.subscribe(&"channel1", 100);
+        hub.subscribe(&"channel2", 100);
 
         let result = hub.unsubscribe_multiple(&["channel1", "channel2"], &receiver);
         match result {
@@ -640,14 +648,14 @@ mod tests {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
         let mut waiter = hub.get_creation_waiter(&"channel1");
 
-        let _ = hub.subscribe(&"channel1");
+        let _ = hub.subscribe(&"channel1", 100);
         assert!(waiter.recv().await.is_some());
     }
 
     #[tokio::test]
     async fn test_subscribe_multiple() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe_multiple(&["channel1", "channel2"]);
+        let receiver = hub.subscribe_multiple(&["channel1", "channel2"], 100);
 
         assert!(hub.is_subscribed(&"channel1", &receiver));
         assert!(hub.is_subscribed(&"channel2", &receiver));
@@ -656,7 +664,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_sender() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe(&"channel1");
+        let receiver = hub.subscribe(&"channel1", 100);
 
         let sender = hub.get_sender(&"channel1", &receiver);
         assert!(sender.is_some());
@@ -668,7 +676,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_senders() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe_multiple(&["channel1", "channel2"]);
+        let receiver = hub.subscribe_multiple(&["channel1", "channel2"], 100);
 
         let senders = hub.get_senders(&receiver, &["channel1", "channel2"]);
         assert_eq!(senders.len(), 2);
@@ -682,11 +690,11 @@ mod tests {
     #[tokio::test]
     async fn test_unsubscribe_all_multiple_channels() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let _receiver1 = hub.subscribe(&"channel1");
-        let _receiver2 = hub.subscribe(&"channel2");
-        let _receiver3 = hub.subscribe(&"channel3");
+        let _receiver1 = hub.subscribe(&"channel1", 100);
+        let _receiver2 = hub.subscribe(&"channel2", 100);
+        let _receiver3 = hub.subscribe(&"channel3", 100);
 
-        let receiver = hub.subscribe_multiple(&["channel1", "channel2", "channel3"]);
+        let receiver = hub.subscribe_multiple(&["channel1", "channel2", "channel3"], 100);
 
         let unsubscribed_channels = hub.unsubscribe_all(&receiver);
         assert_eq!(unsubscribed_channels.len(), 3);
@@ -698,8 +706,8 @@ mod tests {
     #[tokio::test]
     async fn test_broadcast_arc() {
         let mut hub: NotifierHub<Arc<String>, &'static str> = NotifierHub::new();
-        let receiver1 = hub.subscribe_multiple(&["channel1", &"channel2"]);
-        let _receiver2 = hub.subscribe(&"channel3");
+        let receiver1 = hub.subscribe_multiple(&["channel1", &"channel2"], 100);
+        let _receiver2 = hub.subscribe(&"channel3", 100);
 
         let msg = "Hello ARC broadcast!".to_string();
         let handler = hub.broadcast_arc(msg.clone());
@@ -715,7 +723,7 @@ mod tests {
     #[tokio::test]
     async fn test_arc_send() {
         let mut hub: NotifierHub<Arc<String>, &'static str> = NotifierHub::new();
-        let receiver = hub.subscribe(&"channel1");
+        let receiver = hub.subscribe(&"channel1", 100);
 
         let msg = "Hello ARC send!".to_string();
         let handlers = hub.arc_send(msg, &"channel1").unwrap();
@@ -743,7 +751,7 @@ mod tests {
     #[tokio::test]
     async fn test_clone_send() {
         let mut hub = NotifierHub::new();
-        let receiver = hub.subscribe(&"channel1");
+        let receiver = hub.subscribe(&"channel1", 100);
         let msg = "Message !".to_string();
         let handler = hub.clone_send(msg.clone(), &"channel1").unwrap();
         handler.wait(None).await.unwrap();
@@ -766,8 +774,8 @@ mod tests {
     #[tokio::test]
     async fn test_broadcast_clone() {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
-        let mut receiver1 = hub.subscribe(&"channel1");
-        let mut receiver2 = hub.subscribe(&"channel2");
+        let mut receiver1 = hub.subscribe(&"channel1", 100);
+        let mut receiver2 = hub.subscribe(&"channel2", 100);
 
         let msg = "Clone broadcast message".to_string();
         let handler = hub.broadcast_clone(msg.clone());
@@ -796,7 +804,7 @@ mod tests {
         let mut hub: NotifierHub<String, &'static str> = NotifierHub::new();
         let mut destruction_waiter = hub.get_destruction_waiter(&"channel1");
 
-        let mut receiver = hub.subscribe(&"channel1");
+        let mut receiver = hub.subscribe(&"channel1", 100);
 
         assert_eq!(hub.channel_state(&"channel1"), ChannelState::Running);
 

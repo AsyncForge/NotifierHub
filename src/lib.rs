@@ -17,9 +17,9 @@
 //!     let mut hub = NotifierHub::new();
 //!
 //!     // Subscribe to a channel and get a receiver
-//!     let mut receiver1 = hub.subscribe(&"channel1");
+//!     let mut receiver1 = hub.subscribe(&"channel1", 100);
 //!     // Subscribe to the same channel and get a receiver
-//!     let mut receiver2 = hub.subscribe(&"channel1");
+//!     let mut receiver2 = hub.subscribe(&"channel1", 100);
 //!
 //!     // Message to broadcast
 //!     let msg = "Message !";
