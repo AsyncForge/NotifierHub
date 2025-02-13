@@ -9,7 +9,7 @@
 //! and wait for the message to be sent using a timeout:
 //!
 //! ```rust
-//! use notifier_hub::{notifier::NotifierHub, writing_handler::Duration};
+//! use notifier_hub::{notifiers::NotifierHub, writing_handler::Duration};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -40,7 +40,7 @@
 //! The example below demonstrates how to use notifier_hub to create a multithreaded notification system, where multiple subscribers listen for messages on different channels.
 //!
 //! ```rust
-//!use notifier_hub::{closable_trait::ClosableMessage, notifier::NotifierHub};
+//!use notifier_hub::{closable_trait::ClosableMessage, notifiers::NotifierHub};
 //!use std::sync::Arc;
 //!use tokio::sync::Mutex;
 //!
@@ -150,7 +150,7 @@
 /// - `NotifierHub<M, ChannelId>`: The main structure that manages channels.
 /// - `SmartChannelId`: A unique identifier for each created channel.
 /// - `CreationWaiter`: A receiver that gets notified when a subscription is created.
-pub mod notifier;
+pub mod notifiers;
 
 /// Provides the `WritingHandler` for handling broadcasts in an asynchronous context.
 ///

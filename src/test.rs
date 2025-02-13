@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod notifier_test {
 
-    use crate::{closable_trait::ClosableMessage, notifier::NotifierHub};
+    use crate::{closable_trait::ClosableMessage, notifiers::NotifierHub};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

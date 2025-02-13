@@ -4,7 +4,7 @@ use tokio::{sync::mpsc::error::SendError, task::JoinHandle, time::timeout};
 
 use crate::{
     error::{NotifierError, UnexpectedErrorKind},
-    notifier::{Sender, SmartChannelId},
+    notifiers::{Sender, SmartChannelId},
 };
 
 type Handler<M> = JoinHandle<Result<(), SendError<M>>>;

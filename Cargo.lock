@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "notifier_hub"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "smart_channel",
  "thiserror",

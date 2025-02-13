@@ -1,3 +1,4 @@
+use super::{ChannelState, Receiver, Sender, SmartChannelId};
 use crate::{
     closable_trait::ClosableMessage,
     error::{NotifierError, UnexpectedErrorKind},
@@ -5,36 +6,10 @@ use crate::{
     writing_handler::WritingHandler,
 };
 use smart_channel::channel;
-pub use smart_channel::{Receiver, Sender};
 use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 /// The default size of a notification channel.
 pub(crate) const NOTIFIER_CHANNEL_SIZE: usize = 10;
-
-/// Represents the state of a channel. You can retrieve it by calling `channel_state` on the `NotifierHub`.
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum ChannelState {
-    /// The initial state of the channel—no subscribers have ever connected.
-    Uninitialised,
-    /// The channel has active subscribers. This state remains while there is some subscriber, even if they are not active
-    Running,
-    /// The channel had subscribers in the past, but they have unsubscribed, or they had dropped and then clean_channel has been called
-    Over,
-}
-
-/// `SmartChannelId` is a unique identifier for channels within a `NotifierHub`.
-/// It consists of a monotonically increasing counter and the memory address of the `NotifierHub`
-/// (converted to `usize`). This guarantees that the ID is unique across different contexts.
-///
-/// The address represents a specific field of a specific `NotifierHub`, ensuring its global uniqueness.
-/// We store the address as a `usize` instead of a raw pointer to simplify the type and to keep this type simple without involving generics.
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub struct SmartChannelId {
-    /// A counter that increments with each created channel to ensure uniqueness.
-    pub(crate) channel_counter: usize,
-    /// The memory address of the `NotifierHub`, stored as a `usize` for simplicity (used as an identifier, not as a dereferenceable address).
-    pub(crate) notifier_address: usize,
-}
 
 /// Sender bound to a receiver that just call unsubscribe method of the hub.
 pub type DeadSender<M> = MessageSender<M>;
@@ -205,7 +180,7 @@ where
     ///
     /// Example:
     /// ```rust
-    /// use notifier_hub::notifier::NotifierHub;
+    /// use notifier_hub::notifiers::NotifierHub;
     ///
     /// let mut hub = NotifierHub::new();
     /// let large_msg = vec![0u8; 10_000_000]; // Large data
@@ -324,7 +299,7 @@ where
     ///
     /// Example:
     /// ```rust
-    /// use notifier_hub::notifier::NotifierHub;
+    /// use notifier_hub::notifiers::NotifierHub;
     ///
     /// let mut hub = NotifierHub::new();
     /// let msg = "Short message".to_string(); // Lightweight message
@@ -508,7 +483,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notifier::ChannelState;
+    use crate::notifiers::ChannelState;
     use smart_channel::channel;
 
     #[tokio::test]
