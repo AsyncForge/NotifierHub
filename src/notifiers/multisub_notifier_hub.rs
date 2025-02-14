@@ -1,4 +1,4 @@
-use super::{ChannelState, Receiver, Sender, SmartChannelId};
+use super::{ChannelState, NotifierHubTrait, Receiver, Sender, SmartChannelId};
 use crate::{
     closable_trait::ClosableMessage,
     error::{NotifierError, UnexpectedErrorKind},
@@ -458,7 +458,7 @@ where
         &mut self,
         channel: &ChannelId,
     ) -> Result<WritingHandler<M>, NotifierError<M, ChannelId>> {
-        match self.senders.remove(&channel) {
+        match self.senders.remove(channel) {
             Some(dead_senders) => {
                 for dead_sender in dead_senders.iter() {
                     self.notify_destruction(channel, dead_sender.clone());
@@ -477,6 +477,63 @@ where
         for channel in channels {
             let _ = self.shutdown_clone(&channel); // We can ignore because get_channels returns valid data
         }
+    }
+}
+
+impl<M: Clone + Send + 'static, ChannelId: Hash + Eq + Clone> NotifierHubTrait
+    for NotifierHub<M, ChannelId>
+{
+    type M = M;
+    type ChannelId = ChannelId;
+    type Subscribtion = MessageReceiver<M>;
+
+    fn subscribe(&mut self, id: &Self::ChannelId, channel_size: usize) -> Self::Subscribtion {
+        self.subscribe(id, channel_size)
+    }
+
+    fn unsubscribe(
+        &mut self,
+        id: &Self::ChannelId,
+        subscribtion: &Self::Subscribtion,
+    ) -> Result<ChannelState, NotifierError<Self::M, Self::ChannelId>> {
+        self.unsubscribe(id, subscribtion)
+    }
+
+    fn channel_state(&self, id: &Self::ChannelId) -> ChannelState {
+        self.channel_state(id)
+    }
+
+    fn get_channels(&self) -> Vec<Self::ChannelId> {
+        self.get_channels()
+    }
+
+    fn publish(
+        &self,
+        msg: Self::M,
+        id: &Self::ChannelId,
+    ) -> Result<WritingHandler<Self::M>, NotifierError<Self::M, Self::ChannelId>> {
+        self.clone_send(msg, id)
+    }
+
+    fn broadcast(&self, msg: Self::M) -> WritingHandler<Self::M>
+    where
+        <Self as NotifierHubTrait>::M: Send,
+    {
+        self.broadcast_clone(msg)
+    }
+
+    fn clean_channel(&mut self, channel: &Self::ChannelId) -> ChannelState {
+        self.clean_channel(channel)
+    }
+
+    fn shutdown(
+        &mut self,
+        channel: &Self::ChannelId,
+    ) -> Result<WritingHandler<Self::M>, NotifierError<Self::M, Self::ChannelId>>
+    where
+        <Self as NotifierHubTrait>::M: ClosableMessage,
+    {
+        self.shutdown_clone(channel)
     }
 }
 

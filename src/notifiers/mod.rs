@@ -1,8 +1,10 @@
 mod channel_state;
 mod multisub_notifier_hub;
+mod notifier_trait;
 mod smart_channel_id;
 
 pub use channel_state::ChannelState;
 pub use multisub_notifier_hub::NotifierHub;
+pub use notifier_trait::NotifierHubTrait;
 pub use smart_channel::{Receiver, Sender};
 pub use smart_channel_id::SmartChannelId;
